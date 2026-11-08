@@ -1,0 +1,54 @@
+# sessionboard example configuration
+#
+# Copy to ~/.config/sessionboard/config.toml (or run `sessionboard init`, which writes
+# a starter file with this machine's hostname filled in) and edit the [[hosts]] list.
+#
+# Every machine you run Claude Code or Codex on gets a [[hosts]] entry. The machine
+# sessionboard runs on is included automatically under `local_name`; set
+# `local = false` if you would rather not see its sessions.
+
+[settings]
+local = true
+local_name = "mbp-personal"   # label shown in the host column for this machine
+sync_on_start = true          # pull every host when the TUI opens
+auto_sync_seconds = 120       # background re-sync interval; 0 = only when you press s
+ssh_timeout = 25              # seconds per host, ssh connect + collect
+hide_empty = true             # hide sessions that never got a human prompt (claude -p, etc.)
+recent_minutes = 15           # "·" marker: modified this recently but no live process
+
+# --- a second laptop --------------------------------------------------------------
+[[hosts]]
+name = "work-mbp"
+ssh = "work-mbp"              # anything `ssh` accepts: ~/.ssh/config alias, user@host,
+                              # Tailscale MagicDNS name, ProxyJump alias ...
+
+# --- a Linux site with a shared NFS home ----------------------------------------
+# All machines at the site see the same ~/.claude and ~/.codex, so give them one
+# `group`: each session is listed once under the group name, and it shows live if
+# any machine in the group sees the process. List every machine you actually run
+# agents on, because a pid from login1 looks dead when checked from build7.
+[[hosts]]
+name = "site-a-login1"
+ssh = "alice@login1.site-a.example.com"
+group = "site-a"
+
+[[hosts]]
+name = "site-a-build7"
+ssh = "alice@build7.site-a.example.com"
+group = "site-a"
+
+# --- a second site, reached through a bastion -----------------------------------
+# Put the ProxyJump in ~/.ssh/config and reference the alias here.
+[[hosts]]
+name = "site-b-dev3"
+ssh = "siteb-dev3"
+group = "site-b"
+
+# --- optional per-host knobs ------------------------------------------------------
+[[hosts]]
+name = "odd-box"
+ssh = "odd-box"
+claude_dir = "/data/alice/.claude"   # default ~/.claude
+codex_dir = "/data/alice/.codex"     # default ~/.codex
+python = "/opt/python3.9/bin/python3" # interpreter for the collector; default python3
+                                      # (needs 3.6+, stdlib only)

@@ -1,0 +1,42 @@
+[project]
+name = "sessionboard"
+version = "0.1.0"
+description = "One TUI for every Claude Code and Codex session across all your machines"
+readme = "README.md"
+license = "MIT"
+authors = [{ name = "David Ferguson", email = "ferguson.david@gmail.com" }]
+requires-python = ">=3.11"
+dependencies = [
+    "textual>=1.0",
+]
+
+[project.scripts]
+sessionboard = "sessionboard.cli:main"
+
+[dependency-groups]
+dev = [
+    "pytest>=8",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/sessionboard"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+
+[tool.ruff.lint]
+# S110/S112: the collector swallows per-file errors on purpose (one bad transcript
+# must not fail a whole host); it is also pinned to Python 3.6 syntax, so no UP rules.
+ignore = ["S110", "S112", "S603", "S607", "S108", "PLR2004", "E501", "BLE001", "PLW1510", "RUF012"]
+
+[tool.ruff.lint.per-file-ignores]
+"src/sessionboard/collector.py" = ["UP", "RUF012", "EXE001", "FURB", "PIE", "C4", "PLR"]
+"tests/*" = ["S101", "SLF001", "ANN", "D"]
