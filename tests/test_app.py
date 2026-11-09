@@ -233,3 +233,40 @@ def test_cursor_stays_visible_when_detail_pane_grows(tmp_path, monkeypatch):
             assert table.cursor_row == 39
             assert table.scroll_y <= 39 < table.scroll_y + visible_rows
     asyncio.run(exercise())
+
+
+def test_refresh_updates_in_place_and_keeps_scroll(tmp_path, monkeypatch):
+    async def exercise():
+        app = make_app(tmp_path, monkeypatch)
+        sessions = [{"id": f"s{i:02d}", "tool": "claude", "project": f"p{i}", "mtime": 1000 - i,
+                     "first_prompt": f"prompt {i}"} for i in range(60)]
+        app.states[0].data["claude"]["sessions"] = sessions
+        async with app.run_test(size=(120, 30)) as pilot:
+            table = app.query_one(DataTable)
+            await pilot.pause()
+            table.move_cursor(row=45)
+            await pilot.pause()
+            scroll_y = table.scroll_y
+            assert scroll_y > 0
+            clears = []
+            real_clear = table.clear
+            monkeypatch.setattr(table, "clear", lambda *a, **k: clears.append(1) or real_clear(*a, **k))
+
+            app._rebuild()  # a host re-synced with nothing new
+            await pilot.pause()
+            assert clears == [] and table.scroll_y == scroll_y and table.cursor_row == 45
+
+            sessions[45]["first_prompt"] = "a changed prompt"
+            app._rebuild()
+            await pilot.pause()
+            assert clears == [] and table.scroll_y == scroll_y
+            assert "a changed prompt" in table.get_row_at(45)[-1].plain
+
+            sessions.append({"id": "new", "tool": "claude", "project": "new", "mtime": 2000,
+                             "first_prompt": "brand new"})
+            app._rebuild()  # a new session at the top shifts every row down by one
+            await pilot.pause()
+            assert clears == [1]
+            assert app._selected_session().id == "s45" and table.cursor_row == 46
+            assert abs(table.scroll_y - scroll_y) <= 1
+    asyncio.run(exercise())

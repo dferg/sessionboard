@@ -22,6 +22,7 @@ from .state import SORT_MODES, ViewState, load_state, save_state, state_path
 from .sync import discover_targets, load_cache, repatriate_session, sync_all
 
 TOOL_CYCLE = (None, "claude", "codex")
+COLUMN_KEYS = ("live", "pin", "tool", "host", "project", "age", "what")
 TOOL_STYLE = {"claude": "bold #d97757", "codex": "bold #10a37f"}
 
 HELP = """\
@@ -166,6 +167,13 @@ class RepatriateScreen(ModalScreen[str | None]):
         self.dismiss(target)
 
 
+def _cell_sig(cell: object) -> tuple:
+    """What a cell looks like; rich's Text equality ignores the base style and justify."""
+    if isinstance(cell, Text):
+        return (cell.plain, str(cell.style), tuple(cell.spans), cell.justify)
+    return (repr(cell),)
+
+
 def _candidate_text(c: dict) -> Text:
     t = Text()
     t.append(c["path"], style="bold")
@@ -261,6 +269,7 @@ class SessionBoard(App[None]):
         self.hidden = set(saved.hidden)
         self.show_hidden = saved.show_hidden
         self._table_ready = False
+        self._rendered: dict[str, tuple] = {}  # row key -> per-column cell signatures
 
     # ------------------------------------------------------------------ layout
     def compose(self) -> ComposeResult:
@@ -326,13 +335,18 @@ class SessionBoard(App[None]):
         return seen
 
     def _refresh_table(self, keep_cursor: bool = True) -> None:
+        """Bring the table up to date without redrawing what has not changed.
+
+        Syncs and the age timer refresh often, usually with identical rows. Rebuilding
+        the table then made it jump to the top and back, so when the row keys and
+        column widths are unchanged only the differing cells are updated in place.
+        """
         if not self._table_ready:
             return
         table = self.query_one(DataTable)
         selected = self._selected()
         sessions = self._filtered()
         self.rows = self._layout_rows(sessions)
-        table.clear()
         now = time.time()
         recent = self.config.settings.recent_minutes * 60
         host_w = max([12] + [len(s.group) for s in sessions])
@@ -340,41 +354,64 @@ class SessionBoard(App[None]):
         proj_w = min(max([10] + [len(s.project) for s in sessions]), 24)
         if self.by_project:
             proj_w = max(proj_w, 14)
-        table.columns[self._col_host].width = host_w
-        table.columns[self._col_project].width = proj_w
         what_w = max(20, table.size.width - (1 + 1 + 6 + host_w + proj_w + 4 + 7 * 3) - 2)
-        for i, row in enumerate(self.rows):
-            if isinstance(row, ProjectGroup):
-                cells = _group_cells(row, now, recent, host_w, proj_w, what_w,
-                                     folded=self._folded(row))
-                cells.insert(1, Text(" "))
-                table.add_row(*cells, key=row.key)
-                continue
-            s = row
-            if self.by_project and s.key not in self.pinned:
-                last = i + 1 >= len(self.rows) or isinstance(self.rows[i + 1], ProjectGroup)
-                project_cell = Text("└" if last else "├", style="dim")
-            else:
-                project_cell = Text(s.project[:proj_w], style="bold" if s.live else "")
-            table.add_row(
-                _live_cell(s, now, recent),
-                Text("★" if s.key in self.pinned else " ", style="yellow"),
-                Text(s.tool, style=TOOL_STYLE.get(s.tool, "")),
-                Text(s.group[:host_w]),
-                project_cell,
-                Text(relative_age(s.mtime, now), justify="right",
-                     style="" if now - s.mtime < 86400 else "dim"),
-                (Text("[hidden] ", style="dim") + _what_cell(s, what_w - 9)
-                 if s.key in self.hidden else _what_cell(s, what_w)),
-                key=s.key,
-            )
+        rendered = [(row.key, self._row_cells(i, row, now, recent, host_w, proj_w, what_w))
+                    for i, row in enumerate(self.rows)]
+        same_shape = (
+            [key for key, _ in rendered] == [row.key.value for row in table.ordered_rows]
+            and table.columns[self._col_host].width == host_w
+            and table.columns[self._col_project].width == proj_w
+        )
+        if same_shape:
+            for key, cells in rendered:
+                old = self._rendered.get(key, ())
+                for col, cell in zip(COLUMN_KEYS, cells):
+                    sig = _cell_sig(cell)
+                    if dict(old).get(col) != sig:
+                        table.update_cell(key, col, cell, update_width=col == "what")
+        else:
+            scroll_y = table.scroll_y
+            table.clear()
+            table.columns[self._col_host].width = host_w
+            table.columns[self._col_project].width = proj_w
+            for key, cells in rendered:
+                table.add_row(*cells, key=key)
+            # clear() scrolls to the top; stay where the user was looking.
+            table.scroll_to(y=scroll_y, animate=False, immediate=True, force=True)
+        self._rendered = {key: tuple(zip(COLUMN_KEYS, map(_cell_sig, cells)))
+                          for key, cells in rendered}
+        target = 0
         if keep_cursor and selected is not None:
-            for i, row in enumerate(self.rows):
-                if row.key == selected.key:
-                    table.move_cursor(row=i)
-                    break
+            target = next((i for i, row in enumerate(self.rows) if row.key == selected.key), 0)
+        if self.rows and (target != table.cursor_row or not same_shape):
+            table.move_cursor(row=target)
         self._refresh_detail()
         self._save_view()
+
+    def _row_cells(self, i: int, row: Session | ProjectGroup, now: float, recent: float,
+                   host_w: int, proj_w: int, what_w: int) -> list[Text]:
+        if isinstance(row, ProjectGroup):
+            cells = _group_cells(row, now, recent, host_w, proj_w, what_w,
+                                 folded=self._folded(row))
+            cells.insert(1, Text(" "))
+            return cells
+        s = row
+        if self.by_project and s.key not in self.pinned:
+            last = i + 1 >= len(self.rows) or isinstance(self.rows[i + 1], ProjectGroup)
+            project_cell = Text("└" if last else "├", style="dim")
+        else:
+            project_cell = Text(s.project[:proj_w], style="bold" if s.live else "")
+        return [
+            _live_cell(s, now, recent),
+            Text("★" if s.key in self.pinned else " ", style="yellow"),
+            Text(s.tool, style=TOOL_STYLE.get(s.tool, "")),
+            Text(s.group[:host_w]),
+            project_cell,
+            Text(relative_age(s.mtime, now), justify="right",
+                 style="" if now - s.mtime < 86400 else "dim"),
+            (Text("[hidden] ", style="dim") + _what_cell(s, what_w - 9)
+             if s.key in self.hidden else _what_cell(s, what_w)),
+        ]
 
     def _save_view(self) -> None:
         state = ViewState(
