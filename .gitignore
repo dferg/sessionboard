@@ -10,3 +10,4 @@ config.local.toml
 .sessionboard/
 view-*.json
 *.sessionboard-backup
+build/

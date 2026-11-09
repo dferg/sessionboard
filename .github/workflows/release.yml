@@ -1,0 +1,35 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  pyz:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.11"
+
+      - name: Run tests
+        run: uv run --python 3.11 pytest -q
+
+      - name: Build sessionboard.pyz
+        run: scripts/build-pyz.sh 3.11
+
+      - name: Smoke test the zipapp
+        run: |
+          python3 dist/sessionboard.pyz --version
+          python3 dist/sessionboard.pyz --help > /dev/null
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/sessionboard.pyz
+          generate_release_notes: true

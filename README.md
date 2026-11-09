@@ -42,18 +42,38 @@ hosts  ✓ mbp-personal 12s   ✓ work-mbp 14s   ✓ site-a 20s   ✗ site-b (ca
 
 ## Install
 
+The release is a single file, `sessionboard.pyz`, with every dependency bundled. It
+needs only Python 3.11 or newer on your machine: no pip, uv, PyPI or package proxy.
+Grab it from the [latest release](https://github.com/dferg/sessionboard/releases/latest):
+
 ```sh
-git clone https://github.com/dferg/sessionboard.git
-cd sessionboard
-uv tool install .                 # gives you `sessionboard` on PATH (add --editable to hack on it)
-sessionboard init                 # writes ~/.config/sessionboard/config.toml
+curl -fsSLo ~/.local/bin/sessionboard \
+  https://github.com/dferg/sessionboard/releases/latest/download/sessionboard.pyz
+chmod +x ~/.local/bin/sessionboard   # make sure ~/.local/bin is on your PATH
+sessionboard init                    # writes ~/.config/sessionboard/config.toml
 $EDITOR ~/.config/sessionboard/config.toml
-sessionboard sync                 # first pull, shows per-host status
-sessionboard                      # the TUI
+sessionboard sync                    # first pull, shows per-host status
+sessionboard                         # the TUI
 ```
+
+The file runs with whatever `python3` is first on your PATH. If that is older than
+3.11, run it explicitly: `python3.11 sessionboard.pyz`. Being pure Python, the same
+file works on macOS, Linux and Windows (`py sessionboard.pyz`).
 
 Remote hosts need `ssh` key access (BatchMode, no password prompts) and a `python3`
 that is 3.6 or newer. Nothing else.
+
+### From source
+
+```sh
+git clone https://github.com/dferg/sessionboard.git
+cd sessionboard
+uv tool install .                 # `sessionboard` on PATH (add --editable to hack on it)
+scripts/build-pyz.sh              # or build dist/sessionboard.pyz yourself
+```
+
+Releases are built by `.github/workflows/release.yml`: push a `v*` tag and the
+workflow runs the tests, builds the zipapp and attaches it to a GitHub Release.
 
 ## Config
 

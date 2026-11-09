@@ -11,13 +11,22 @@ import os
 import subprocess
 import time
 from concurrent.futures import ThreadPoolExecutor
+from importlib.resources import files
 from pathlib import Path
 
 from . import collector
 from .config import CACHE_DIR, Config, HostSpec
 from .model import HostState
 
-COLLECTOR_SRC = Path(collector.__file__)
+
+def collector_source() -> bytes:
+    """Return the collector script to stream to a host.
+
+    Read through ``importlib.resources`` rather than ``collector.__file__`` so it also
+    works when sessionboard runs from a zipapp (``sessionboard.pyz``), where package
+    files are not real paths on disk.
+    """
+    return files("sessionboard").joinpath("collector.py").read_bytes()
 
 
 def cache_path(name: str) -> Path:
@@ -82,7 +91,7 @@ def run_remote(spec: HostSpec, extra_args: list[str], timeout: int) -> dict:
     try:
         proc = subprocess.run(
             cmd,
-            input=COLLECTOR_SRC.read_bytes(),
+            input=collector_source(),
             capture_output=True,
             timeout=timeout,
         )
