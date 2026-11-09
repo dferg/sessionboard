@@ -14,9 +14,9 @@ SORT_MODES = ("live", "recent", "project", "host", "tool")
 
 @dataclass
 class ViewState:
+    # The search text is deliberately not saved: a forgotten filter silently hides sessions.
     by_project: bool = False
     collapsed: list[str] = field(default_factory=list)
-    query: str = ""
     tool_filter: str | None = None
     group_filter: str | None = None
     live_only: bool = False
@@ -49,8 +49,6 @@ def load_state(path: Path) -> ViewState:
         value = raw.get(key)
         if isinstance(value, list) and all(isinstance(item, str) for item in value):
             setattr(state, key, sorted(set(value)))
-    if isinstance(raw.get("query"), str):
-        state.query = raw["query"]
     if raw.get("tool_filter") in (None, "claude", "codex"):
         state.tool_filter = raw.get("tool_filter")
     if isinstance(raw.get("group_filter"), str):

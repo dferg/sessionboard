@@ -64,17 +64,19 @@ def test_grouped_pin_restart_and_view_preferences(tmp_path, monkeypatch):
             assert saved.by_project and saved.collapsed and saved.pinned
             assert saved.sort_mode == "recent" and saved.tool_filter == "claude"
             assert saved.group_filter == "example" and saved.show_archived
-            assert saved.query == "example"
+            assert "query" not in json.loads(app._state_path.read_text())
         restarted = make_app(tmp_path, monkeypatch)
         async with restarted.run_test(size=(120, 40)) as pilot:
-            assert restarted.query_one("#filter", Input).value == "example"
+            assert restarted.query == ""
+            assert restarted.query_one("#filter", Input).value == ""
             assert load_state(restarted._state_path) == saved
             assert restarted.rows[0].id == "older"
             await pilot.press("p")
             assert not restarted.pinned
             assert isinstance(restarted.rows[0], ProjectGroup)
             assert restarted._selected_session().id == "older"
-            assert sum(isinstance(row, Session) for row in restarted.rows) == 3
+            # Unpinning unfolds only that session's project; the others stay folded.
+            assert sum(isinstance(row, Session) for row in restarted.rows) == 1
     asyncio.run(exercise())
 
 

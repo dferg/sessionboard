@@ -231,7 +231,7 @@ class SessionBoard(App[None]):
         self._state_error = False
         self.by_project = saved.by_project
         self.collapsed = set(saved.collapsed)
-        self.query = saved.query
+        self.query = ""  # never restored; see ViewState
         self.tool_filter = saved.tool_filter
         self.group_filter = saved.group_filter if saved.group_filter in self._groups() else None
         self.live_only = saved.live_only
@@ -358,7 +358,7 @@ class SessionBoard(App[None]):
 
     def _save_view(self) -> None:
         state = ViewState(
-            by_project=self.by_project, collapsed=sorted(self.collapsed), query=self.query,
+            by_project=self.by_project, collapsed=sorted(self.collapsed),
             tool_filter=self.tool_filter, group_filter=self.group_filter,
             live_only=self.live_only, show_archived=self.show_archived,
             sort_mode=self.sort_mode, pinned=sorted(self.pinned),

@@ -29,7 +29,8 @@ hosts  ✓ mbp-personal 12s   ✓ work-mbp 14s   ✓ site-a 20s   ✗ site-b (ca
 - **Shared NFS homes.** Give hosts that share a home directory the same `group`: a
   session is listed once, and it is live if it is live on any of them.
 - **Remember your view.** Grouping, project folds, sort order, filters, and pinned
-  sessions survive a restart. Press `p` to pin a session above the rest of the list.
+  sessions survive a restart. The `/` search text does not, so it can't hide sessions
+  unnoticed. Press `p` to pin a session above the rest of the list.
 - **Tidy the list.** Press `x` to hide a session and `H` to show hidden sessions so
   you can restore them. Hiding is saved locally and leaves the session untouched.
 - **Bring your own host inventory.** An optional local command can supply additional
