@@ -187,3 +187,28 @@ def test_cli_respects_hidden_before_limit(tmp_path, monkeypatch, capsys):
     cli._cmd_list(app.config, args)
     rows = json.loads(capsys.readouterr().out)
     assert len(rows) == 3 and rows[0]["hidden"] is True
+
+
+def test_vim_paging_and_jump_keys(tmp_path, monkeypatch):
+    async def exercise():
+        app = make_app(tmp_path, monkeypatch)
+        app.states[0].data["claude"]["sessions"] = [
+            {"id": f"s{i:02d}", "tool": "claude", "project": f"p{i}", "mtime": 1000 - i,
+             "first_prompt": "example"} for i in range(60)]
+        async with app.run_test(size=(120, 30)) as pilot:
+            table = app.query_one(DataTable)
+            await pilot.press("G")
+            assert table.cursor_row == 59
+            await pilot.press("0")
+            assert table.cursor_row == 0
+            await pilot.press("ctrl+f")
+            paged = table.cursor_row
+            assert paged > 1
+            await pilot.press("ctrl+f")
+            assert table.cursor_row > paged
+            await pilot.press("ctrl+b", "ctrl+b")
+            assert table.cursor_row == 0
+            # In the filter box the same keys are ordinary text.
+            await pilot.press("slash", "0", "G")
+            assert app.query == "0G"
+    asyncio.run(exercise())

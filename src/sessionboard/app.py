@@ -28,6 +28,7 @@ HELP = """\
 [b]Keys[/b]
 
   [b]↑/↓ j/k[/b]   move          [b]Enter[/b]    show details for the row
+  [b]^F/^B[/b]     page down/up  [b]0[/b] / [b]G[/b]    jump to top / bottom
   [b]c[/b] or [b]y[/b]     copy the resume command for the selected session
   [b]/[/b]         filter (type, Enter to keep, Esc to clear)
   [b]t[/b]         cycle tool: all → claude → codex
@@ -217,6 +218,10 @@ class SessionBoard(App[None]):
         Binding("question_mark", "help", "help"),
         Binding("j", "cursor_down", show=False),
         Binding("k", "cursor_up", show=False),
+        Binding("ctrl+f", "page_down", show=False),
+        Binding("ctrl+b", "page_up", show=False),
+        Binding("0", "jump_top", show=False),
+        Binding("G", "jump_bottom", show=False),
     ]
 
     def __init__(self, config: Config) -> None:
@@ -633,6 +638,18 @@ class SessionBoard(App[None]):
 
     def action_cursor_up(self) -> None:
         self.query_one(DataTable).action_cursor_up()
+
+    def action_page_down(self) -> None:
+        self.query_one(DataTable).action_page_down()
+
+    def action_page_up(self) -> None:
+        self.query_one(DataTable).action_page_up()
+
+    def action_jump_top(self) -> None:
+        self.query_one(DataTable).action_scroll_top()
+
+    def action_jump_bottom(self) -> None:
+        self.query_one(DataTable).action_scroll_bottom()
 
     def action_help(self) -> None:
         self.push_screen(HelpScreen())
