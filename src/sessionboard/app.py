@@ -18,6 +18,7 @@ from textual.widgets.option_list import Option
 from . import __version__, clipboard
 from .config import Config, HostSpec
 from .model import HostState, ProjectGroup, Session, group_by_project, merge_sessions, relative_age
+from .state import SORT_MODES, ViewState, load_state, save_state, state_path
 from .sync import discover_targets, load_cache, repatriate_session, sync_all
 
 TOOL_CYCLE = (None, "claude", "codex")
@@ -33,6 +34,10 @@ HELP = """\
   [b]h[/b]         cycle host/group filter
   [b]l[/b]         live sessions only
   [b]g[/b]         group by project (Enter/Space on a project row folds it, [b]z[/b] folds/unfolds all)
+  [b]o[/b]         cycle sort: live first → recent → project → host → tool
+  [b]p[/b]         pin/unpin the selected session at the top (★); filters still apply
+  [b]x[/b]         hide/unhide the selected session (only changes this list)
+  [b]H[/b]         show/hide hidden sessions; other filters still apply
   [b]a[/b]         show/hide archived Codex sessions
   [b]s[/b]         sync every host now        [b]S[/b]  sync only the selected session's host
   [b]R[/b]         repatriate: move an inactive session to the project directory it really worked in
@@ -198,6 +203,10 @@ class SessionBoard(App[None]):
         Binding("h", "cycle_host", "host"),
         Binding("l", "toggle_live", "live only"),
         Binding("g", "toggle_group", "by project"),
+        Binding("o", "cycle_sort", "sort"),
+        Binding("p", "toggle_pin", "pin"),
+        Binding("x", "toggle_hidden", "hide/unhide"),
+        Binding("H", "toggle_show_hidden", "show hidden"),
         Binding("z", "fold_all", "fold all", show=False),
         Binding("space", "select_row", show=False),
         Binding("a", "toggle_archived", "archived", show=False),
@@ -216,13 +225,21 @@ class SessionBoard(App[None]):
         self.states: list[HostState] = load_cache(config)
         self.sessions: list[Session] = []
         self.rows: list[Session | ProjectGroup] = []
-        self.by_project = False
-        self.collapsed: set[str] = set()
-        self.query = ""
-        self.tool_filter: str | None = None
-        self.group_filter: str | None = None
-        self.live_only = False
-        self.show_archived = False
+        self._state_path = state_path(config.path)
+        saved = load_state(self._state_path)
+        self._last_saved = saved
+        self._state_error = False
+        self.by_project = saved.by_project
+        self.collapsed = set(saved.collapsed)
+        self.query = saved.query
+        self.tool_filter = saved.tool_filter
+        self.group_filter = saved.group_filter if saved.group_filter in self._groups() else None
+        self.live_only = saved.live_only
+        self.show_archived = saved.show_archived
+        self.sort_mode = saved.sort_mode
+        self.pinned = set(saved.pinned)
+        self.hidden = set(saved.hidden)
+        self.show_hidden = saved.show_hidden
         self._table_ready = False
 
     # ------------------------------------------------------------------ layout
@@ -233,7 +250,8 @@ class SessionBoard(App[None]):
             table: DataTable = DataTable(id="table", cursor_type="row", zebra_stripes=True)
             yield table
             yield Static("", id="detail")
-            yield Input(placeholder="filter: project, prompt, host, branch, id…", id="filter")
+            yield Input(value=self.query, placeholder="filter: project, prompt, host, branch, id…",
+                        id="filter")
         yield Footer()
 
     def on_mount(self) -> None:
@@ -241,6 +259,7 @@ class SessionBoard(App[None]):
         table = self.query_one(DataTable)
         table.focus()
         table.add_column(" ", key="live", width=1)
+        table.add_column("★", key="pin", width=1)
         table.add_column("tool", key="tool", width=6)
         self._col_host = table.add_column("host", key="host", width=12)
         self._col_project = table.add_column("project", key="project", width=22)
@@ -264,6 +283,8 @@ class SessionBoard(App[None]):
     def _filtered(self) -> list[Session]:
         out = []
         for s in self.sessions:
+            if s.key in self.hidden and not self.show_hidden:
+                continue
             if self.tool_filter and s.tool != self.tool_filter:
                 continue
             if self.group_filter and s.group != self.group_filter:
@@ -301,26 +322,30 @@ class SessionBoard(App[None]):
             proj_w = max(proj_w, 14)
         table.columns[self._col_host].width = host_w
         table.columns[self._col_project].width = proj_w
-        what_w = max(20, table.size.width - (1 + 6 + host_w + proj_w + 4 + 6 * 3) - 2)
+        what_w = max(20, table.size.width - (1 + 1 + 6 + host_w + proj_w + 4 + 7 * 3) - 2)
         for i, row in enumerate(self.rows):
             if isinstance(row, ProjectGroup):
-                table.add_row(*_group_cells(row, now, recent, host_w, proj_w, what_w,
-                                            folded=self._folded(row)), key=row.key)
+                cells = _group_cells(row, now, recent, host_w, proj_w, what_w,
+                                     folded=self._folded(row))
+                cells.insert(1, Text(" "))
+                table.add_row(*cells, key=row.key)
                 continue
             s = row
-            if self.by_project:
+            if self.by_project and s.key not in self.pinned:
                 last = i + 1 >= len(self.rows) or isinstance(self.rows[i + 1], ProjectGroup)
                 project_cell = Text("└" if last else "├", style="dim")
             else:
                 project_cell = Text(s.project[:proj_w], style="bold" if s.live else "")
             table.add_row(
                 _live_cell(s, now, recent),
+                Text("★" if s.key in self.pinned else " ", style="yellow"),
                 Text(s.tool, style=TOOL_STYLE.get(s.tool, "")),
                 Text(s.group[:host_w]),
                 project_cell,
                 Text(relative_age(s.mtime, now), justify="right",
                      style="" if now - s.mtime < 86400 else "dim"),
-                _what_cell(s, what_w),
+                (Text("[hidden] ", style="dim") + _what_cell(s, what_w - 9)
+                 if s.key in self.hidden else _what_cell(s, what_w)),
                 key=s.key,
             )
         if keep_cursor and selected is not None:
@@ -329,20 +354,57 @@ class SessionBoard(App[None]):
                     table.move_cursor(row=i)
                     break
         self._refresh_detail()
+        self._save_view()
+
+    def _save_view(self) -> None:
+        state = ViewState(
+            by_project=self.by_project, collapsed=sorted(self.collapsed), query=self.query,
+            tool_filter=self.tool_filter, group_filter=self.group_filter,
+            live_only=self.live_only, show_archived=self.show_archived,
+            sort_mode=self.sort_mode, pinned=sorted(self.pinned),
+            hidden=sorted(self.hidden), show_hidden=self.show_hidden,
+        )
+        if state == self._last_saved:
+            return
+        try:
+            save_state(self._state_path, state)
+        except OSError:
+            if not self._state_error:
+                self.notify("Could not save view preferences; check the state directory permissions.",
+                            severity="warning")
+            self._state_error = True
+        else:
+            self._last_saved = state
+            self._state_error = False
 
     def _folded(self, group: ProjectGroup) -> bool:
         # a text filter always shows the matches, folded or not
         return group.name in self.collapsed and not self.query
 
     def _layout_rows(self, sessions: list[Session]) -> list[Session | ProjectGroup]:
+        sessions = sorted(sessions, key=self._sort_key)
+        pinned = [s for s in sessions if s.key in self.pinned]
+        unpinned = [s for s in sessions if s.key not in self.pinned]
         if not self.by_project:
-            return list(sessions)
-        rows: list[Session | ProjectGroup] = []
-        for g in group_by_project(sessions):
+            return pinned + unpinned
+        rows: list[Session | ProjectGroup] = list(pinned)
+        groups = group_by_project(unpinned)
+        # Each project is positioned by its first session in the chosen sort order.
+        if self.sort_mode != "live":
+            groups.sort(key=lambda g: self._sort_key(g.sessions[0]))
+        for g in groups:
             rows.append(g)
             if not self._folded(g):
                 rows.extend(g.sessions)
         return rows
+
+    def _sort_key(self, session: Session) -> tuple:
+        if self.sort_mode == "live":
+            return (not session.live, -session.mtime, session.key)
+        if self.sort_mode == "recent":
+            return (-session.mtime, session.key)
+        value = session.group if self.sort_mode == "host" else getattr(session, self.sort_mode)
+        return (value.casefold(), -session.mtime, session.key)
 
     def _refresh_ages(self) -> None:
         # cheap periodic refresh so "3m" becomes "4m" and · markers expire
@@ -386,11 +448,15 @@ class SessionBoard(App[None]):
             filt.append("by project")
         if self.show_archived:
             filt.append("+archived")
+        if self.show_hidden:
+            filt.append("+hidden")
         if self.query:
             filt.append(f"/{self.query}")
         shown = sum(1 for r in self.rows if isinstance(r, Session))
+        hidden_count = sum(s.key in self.hidden for s in self.sessions)
         summary = Text(
-            f"\n{shown}/{len(self.sessions)} sessions · {live} live"
+            f"\n{shown}/{len(self.sessions)} sessions · {live} live · sort={self.sort_mode}"
+            + (f" · {hidden_count} hidden (H toggles)" if hidden_count else "")
             + ("   filter: " + " ".join(filt) if filt else ""),
             style="dim",
         )
@@ -423,6 +489,10 @@ class SessionBoard(App[None]):
             detail.update(_group_detail(s, now, self._folded(s)))
             return
         head = Text()
+        if s.key in self.hidden:
+            head.append("hidden · x to unhide  ", style="dim")
+        if s.key in self.pinned:
+            head.append("★ pinned  ", style="yellow")
         head.append(s.tool, style=TOOL_STYLE.get(s.tool, ""))
         head.append("  ")
         head.append(s.project, style="bold")
@@ -490,6 +560,47 @@ class SessionBoard(App[None]):
     def action_toggle_group(self) -> None:
         self.by_project = not self.by_project
         self._refresh_table(keep_cursor=True)
+        self._refresh_status()
+
+    def action_cycle_sort(self) -> None:
+        self.sort_mode = SORT_MODES[(SORT_MODES.index(self.sort_mode) + 1) % len(SORT_MODES)]
+        self._refresh_table()
+        self._refresh_status()
+
+    def action_toggle_pin(self) -> None:
+        session = self._selected_session()
+        if session is None:
+            self.notify("select a session row to pin", severity="warning")
+            return
+        if session.key in self.pinned:
+            self.pinned.remove(session.key)
+            # Keep the unpinned session visible in its proper project.
+            self.collapsed.discard(session.project)
+        else:
+            self.pinned.add(session.key)
+        self._refresh_table()
+        self._refresh_status()
+
+    def action_toggle_hidden(self) -> None:
+        session = self._selected_session()
+        if session is None:
+            self.notify("select a session row to hide or unhide", severity="warning")
+            return
+        table = self.query_one(DataTable)
+        previous_row = table.cursor_row
+        if session.key in self.hidden:
+            self.hidden.remove(session.key)
+        else:
+            self.hidden.add(session.key)
+        self._refresh_table()
+        if not self.show_hidden and self.rows:
+            table.move_cursor(row=min(previous_row, len(self.rows) - 1))
+            self._refresh_detail()
+        self._refresh_status()
+
+    def action_toggle_show_hidden(self) -> None:
+        self.show_hidden = not self.show_hidden
+        self._refresh_table()
         self._refresh_status()
 
     def action_fold_all(self) -> None:

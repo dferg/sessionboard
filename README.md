@@ -28,6 +28,12 @@ hosts  ✓ mbp-personal 12s   ✓ work-mbp 14s   ✓ site-a 20s   ✗ site-b (ca
   files they hold open.
 - **Shared NFS homes.** Give hosts that share a home directory the same `group`: a
   session is listed once, and it is live if it is live on any of them.
+- **Remember your view.** Grouping, project folds, sort order, filters, and pinned
+  sessions survive a restart. Press `p` to pin a session above the rest of the list.
+- **Tidy the list.** Press `x` to hide a session and `H` to show hidden sessions so
+  you can restore them. Hiding is saved locally and leaves the session untouched.
+- **Bring your own host inventory.** An optional local command can supply additional
+  hosts without putting private discovery code or hostnames in this repository.
 - **Resume without magic.** `c` copies `cd '<project>' && claude --resume <id>` (or
   `codex resume <id>`) to your clipboard (`pbcopy`/`wl-copy`/`xclip`, plus OSC 52 so it
   works when sessionboard itself runs over ssh). Paste it in a shell on the host shown.
@@ -76,6 +82,88 @@ ssh = "build7.site-a"
 group = "site-a"
 ```
 
+### Hosts from an external tool
+
+Keep inventory commands and private configuration in your home directory. Add a
+provider to `~/.config/sessionboard/config.toml`:
+
+```toml
+[[host_providers]]
+command = ["~/.local/bin/list-session-hosts", "--json"]
+timeout = 10                # positive integer, seconds (default 10)
+format = "json"             # default; alternatively "lines"
+```
+
+**Recommended format: a JSON array on stdout.** Each entry can be a hostname string
+or an object. Use `ssh` for the connection target and `name` for a stable display
+label (defaults to `ssh`). This matches the existing static host configuration and
+allows an optional `group` for machines known to share a home directory:
+
+```json
+[
+  "laptop.example.com",
+  {"ssh": "user@dev1.example.com", "name": "dev-one", "group": "shared-home"},
+  {"ssh": "user@dev2.example.com", "name": "dev-two", "group": "shared-home"}
+]
+```
+
+Objects also accept `claude_dir`, `codex_dir`, and `python`, as static hosts do.
+All fields must be non-empty strings; provider entries always describe remote hosts.
+Avoid inferring `group` from a location or display label: it specifically means the
+machines share session files. With `format = "lines"`, print one SSH hostname, alias,
+or `user@host` per line; blank lines are ignored. For hostname/name pairs use JSON,
+which handles spaces and escaping without ambiguous table parsing.
+
+Providers run once when configuration is loaded, for the TUI and the `list`, `sync`,
+and `repatriate` commands. Restart to discover a changed inventory; `s` syncs the
+already loaded hosts. Explicit hosts win over providers on matching `name` **or**
+`ssh`; earlier providers win over later ones. An empty JSON array (or empty lines
+output) means no additional hosts. A timeout, nonzero exit, or invalid output stops
+startup with a configuration error, without echoing the provider's output. Run the
+command separately to troubleshoot it. Providers should use their own local cache
+when offline access matters.
+
+Commands are argument arrays executed directly, with no shell expansion except `~`
+in the executable path. For a shell function, use a private executable wrapper that
+sources its helper and calls the function, or explicitly invoke a shell. Only use
+trusted commands: they run with your user's permissions. Reserve stdout for the
+host data and send diagnostics to stderr.
+
+### Saved views, pins, and hidden sessions
+
+Press `o` to cycle sorting: live first (then newest), newest regardless of liveness,
+project, host, or tool. Alphabetical sorts use recency within each value. In grouped
+view, projects follow the chosen order of their leading session (live sorting uses
+the project's live status and newest activity).
+
+Press `p` on a session to pin or unpin it. Pinned sessions appear at the top in the
+chosen sort order, above project groups when grouping is enabled, with a `★` marker.
+They appear only once and still obey filters. Unpinning returns a session to its
+normal sorted position and opens its project if necessary. Pins remain saved when
+a session is temporarily missing from the cache.
+
+Press `x` on a session to hide it from the list. Press `H` to include hidden sessions,
+marked `[hidden]`, then `x` on one to unhide it. Other filters still apply, so clear
+them if a hidden session is not visible. Hiding also excludes pinned sessions but
+preserves their pins; unhiding restores their normal sorted or pinned position.
+Hidden sessions disappear from project groups, and groups with no remaining visible
+sessions disappear too. Hiding affects display only: it does not stop running agents,
+delete transcripts, or prevent collection. Hidden IDs and the `H` toggle survive
+restarts and cache refreshes, even when a session is temporarily missing.
+
+Preferences are saved automatically to an owner-only JSON file under
+`~/.local/state/sessionboard/` (or `$XDG_STATE_HOME/sessionboard/`), separately for
+each config path. This includes grouping, collapsed projects, sorting, text/tool/
+host/live/archive filters, pins, hidden sessions, and whether to show them.
+A host filter that no longer exists is cleared
+at startup. Missing or invalid state falls back to defaults. Delete the matching
+`view-*.json` file while the app is closed to reset its view.
+
+Keep these files private: state can contain search text, project and host labels,
+and session IDs; the existing host cache also contains session summaries. Neither
+belongs in the public repository. Provider output is used locally and is not written
+back into configuration or repository files. All examples here use fictional hosts.
+
 ## Keys
 
 | key | action |
@@ -87,6 +175,10 @@ group = "site-a"
 | `l` | live sessions only |
 | `R` | repatriate: move an inactive session to the project directory it really worked in (see below) |
 | `g` | group by project: one row per project directory name across hosts and tools, sessions nested beneath; Enter or Space folds a project, `z` folds/unfolds all |
+| `o` | cycle sort: live first → recent → project → host → tool |
+| `p` | pin/unpin the selected session at the top of the list |
+| `x` | hide/unhide the selected session |
+| `H` | show/hide hidden sessions (other filters still apply) |
 | `a` | show archived Codex sessions |
 | `s` | sync every host now (`S`: just the selected session's host) |
 | `r` | reload from the on-disk cache |
@@ -97,7 +189,7 @@ group = "site-a"
 ```
 sessionboard                 TUI
 sessionboard sync [HOST...]  collect from every (or the named) host, print a summary
-sessionboard list [--live] [--tool claude|codex] [--host H] [--by-project] [--json] [-n N] [--sync]
+sessionboard list [--live] [--tool claude|codex] [--host H] [--by-project] [--show-hidden] [--json] [-n N] [--sync]
 sessionboard repatriate ID [--to DIR | --top] [--force]   move a session (see below)
 sessionboard collect [--pretty]   run the collector on this machine, print its JSON
 sessionboard init [--force]
@@ -105,6 +197,10 @@ sessionboard init [--force]
 
 The cache lives in `~/.local/share/sessionboard/hosts/<host>.json`; a failed sync keeps
 the previous data for that host and the status line says how old it is.
+
+`list` excludes hidden sessions unless `--show-hidden` is passed, independently of
+the TUI's `H` toggle. JSON listings include a `hidden` boolean. Collection and sync
+still include all sessions.
 
 ## Repatriating a session
 

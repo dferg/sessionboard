@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import json
 import os
 import socket
+import subprocess
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
@@ -46,6 +48,13 @@ hide_empty = true             # hide sessions that never got a human prompt (cla
 # name = "site-a-build7"
 # ssh = "build7.site-a.example"
 # group = "site-a"
+
+# Optional private host discovery. The executable prints a JSON array of hostnames
+# or objects with ssh, optional name/group, and optional per-host knobs.
+# [[host_providers]]
+# command = ["~/.local/bin/list-session-hosts", "--json"]
+# timeout = 10
+# format = "json"            # or "lines": one hostname per line
 """
 
 
@@ -115,6 +124,61 @@ def _hostspec(raw: dict, idx: int) -> HostSpec:
     )
 
 
+def _provider_hosts(raw: dict, idx: int) -> list[HostSpec]:
+    """Execute an explicitly configured program; never echo its private output in errors."""
+    label = f"host provider {idx}"
+    if not isinstance(raw, dict) or set(raw) - {"command", "timeout", "format"}:
+        raise ConfigError(f"{label}: expected command, optional timeout and format")
+    command = raw.get("command")
+    if (not isinstance(command, list) or not command
+            or not all(isinstance(arg, str) and arg and "\0" not in arg for arg in command)):
+        raise ConfigError(f"{label}: command must be a non-empty array of arguments")
+    timeout = raw.get("timeout", 10)
+    if type(timeout) is not int or timeout <= 0:
+        raise ConfigError(f"{label}: timeout must be a positive integer (seconds)")
+    fmt = raw.get("format", "json")
+    if fmt not in ("json", "lines"):
+        raise ConfigError(f"{label}: format must be json or lines")
+    try:
+        proc = subprocess.run(
+            [os.path.expanduser(command[0]), *command[1:]],
+            stdin=subprocess.DEVNULL, capture_output=True, timeout=timeout,
+        )
+    except subprocess.TimeoutExpired:
+        raise ConfigError(f"{label}: timed out after {timeout}s") from None
+    except OSError:
+        raise ConfigError(f"{label}: could not execute command; check its path and permissions") from None
+    if proc.returncode:
+        raise ConfigError(f"{label}: command exited with status {proc.returncode}; "
+                          "run it separately to inspect diagnostics")
+    try:
+        output = proc.stdout.decode("utf-8")
+        entries = json.loads(output) if fmt == "json" else [
+            line.strip() for line in output.splitlines() if line.strip()
+        ]
+    except (ValueError, UnicodeError):
+        raise ConfigError(f"{label}: expected UTF-8 {fmt} output on stdout") from None
+    if not isinstance(entries, list):
+        raise ConfigError(f"{label}: JSON output must be an array")
+    hosts = []
+    for entry_idx, entry in enumerate(entries, start=1):
+        context = f"{label}, entry {entry_idx}"
+        if isinstance(entry, str):
+            entry = {"ssh": entry}
+        if not isinstance(entry, dict) or set(entry) - {
+            "ssh", "name", "group", "claude_dir", "codex_dir", "python"
+        }:
+            raise ConfigError(f"{context}: expected a hostname or host object with supported keys")
+        if not all(isinstance(v, str) and v.strip() and not any(ord(c) < 32 for c in v)
+                   for v in entry.values()):
+            raise ConfigError(f"{context}: host fields must be non-empty strings without controls")
+        ssh = entry.get("ssh", "")
+        if not ssh or ssh.startswith("-") or any(c.isspace() for c in ssh):
+            raise ConfigError(f"{context}: ssh must be a hostname, alias or user@host, not options")
+        hosts.append(_hostspec({"name": ssh, **entry}, entry_idx))
+    return hosts
+
+
 def load_config(path: str | os.PathLike | None = None) -> Config:
     """Load the config; a missing file yields the defaults (local machine only)."""
     cfg_path = Path(path or os.environ.get("SESSIONBOARD_CONFIG") or DEFAULT_CONFIG).expanduser()
@@ -143,6 +207,19 @@ def load_config(path: str | os.PathLike | None = None) -> Config:
     dupes = {n for n in names if names.count(n) > 1}
     if dupes:
         raise ConfigError(f"duplicate host names: {sorted(dupes)}")
+    providers = raw.get("host_providers", [])
+    if not isinstance(providers, list):
+        raise ConfigError("host_providers must be an array of tables")
+    # Explicit hosts take precedence. Earlier providers win over later providers.
+    known_names = set(names)
+    known_ssh = {h.ssh for h in hosts if h.ssh}
+    for idx, provider in enumerate(providers, start=1):
+        for spec in _provider_hosts(provider, idx):
+            if spec.name in known_names or spec.ssh in known_ssh:
+                continue
+            hosts.append(spec)
+            known_names.add(spec.name)
+            known_ssh.add(spec.ssh)
     return Config(path=cfg_path, settings=settings, hosts=hosts)
 
 

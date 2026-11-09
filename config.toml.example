@@ -52,3 +52,14 @@ claude_dir = "/data/alice/.claude"   # default ~/.claude
 codex_dir = "/data/alice/.codex"     # default ~/.codex
 python = "/opt/python3.9/bin/python3" # interpreter for the collector; default python3
                                       # (needs 3.6+, stdlib only)
+
+# --- optional private host inventory ---------------------------------------------
+# Keep the real command and its data outside the repository, in your local config.
+# Runs once at startup; static hosts win on duplicate name or ssh target.
+# JSON stdout: ["host.example", {"ssh": "dev.example", "name": "dev"}]
+# Objects also accept group, claude_dir, codex_dir, python. A group means shared home.
+# Or use format = "lines" for one hostname/SSH alias per line (no headers).
+# [[host_providers]]
+# command = ["~/.local/bin/list-session-hosts", "--json"]
+# timeout = 10
+# format = "json"

@@ -4,3 +4,9 @@ __pycache__/
 dist/
 .pytest_cache/
 .ruff_cache/
+# Local configuration/state must never be committed. Use the example for docs.
+config.toml
+config.local.toml
+.sessionboard/
+view-*.json
+*.sessionboard-backup
