@@ -212,3 +212,24 @@ def test_vim_paging_and_jump_keys(tmp_path, monkeypatch):
             await pilot.press("slash", "0", "G")
             assert app.query == "0G"
     asyncio.run(exercise())
+
+
+def test_cursor_stays_visible_when_detail_pane_grows(tmp_path, monkeypatch):
+    async def exercise():
+        app = make_app(tmp_path, monkeypatch)
+        sessions = [{"id": f"s{i:02d}", "tool": "claude", "project": f"p{i}", "mtime": 1000 - i,
+                     "first_prompt": "short"} for i in range(40)]
+        # The last row's long prompts make the detail pane taller than for the others.
+        sessions[-1].update(title="title", first_prompt="long " * 200, last_prompt="more " * 200)
+        app.states[0].data["claude"]["sessions"] = sessions
+        async with app.run_test(size=(100, 40)) as pilot:
+            table = app.query_one(DataTable)
+            await pilot.pause()  # let the first layout settle, as it has in real use
+            before = table.size.height
+            await pilot.press("G")
+            await pilot.pause()
+            assert table.size.height < before
+            visible_rows = table.scrollable_content_region.height - table.header_height
+            assert table.cursor_row == 39
+            assert table.scroll_y <= 39 < table.scroll_y + visible_rows
+    asyncio.run(exercise())

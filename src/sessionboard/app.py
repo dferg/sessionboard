@@ -7,7 +7,7 @@ import time
 from rich.console import Group
 from rich.panel import Panel
 from rich.text import Text
-from textual import work
+from textual import events, work
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
@@ -183,6 +183,21 @@ def _candidate_text(c: dict) -> Text:
     return t
 
 
+class SessionTable(DataTable):
+    """A DataTable that keeps the cursor row on screen when the table changes height.
+
+    The status bar and detail pane size to their content, so moving the cursor to a
+    session with a longer prompt can shrink the table after it has already scrolled.
+    """
+
+    def on_resize(self, _event: events.Resize) -> None:
+        self.call_after_refresh(self._keep_cursor_visible)
+
+    def _keep_cursor_visible(self) -> None:
+        if self.row_count and 0 <= self.cursor_row < self.row_count:
+            self._scroll_cursor_into_view()
+
+
 class SessionBoard(App[None]):
     TITLE = "sessionboard"
     AUTO_FOCUS = "#table"
@@ -252,7 +267,7 @@ class SessionBoard(App[None]):
         yield Header(show_clock=True)
         yield Static("", id="status")
         with Vertical():
-            table: DataTable = DataTable(id="table", cursor_type="row", zebra_stripes=True)
+            table = SessionTable(id="table", cursor_type="row", zebra_stripes=True)
             yield table
             yield Static("", id="detail")
             yield Input(value=self.query, placeholder="filter: project, prompt, host, branch, id…",
